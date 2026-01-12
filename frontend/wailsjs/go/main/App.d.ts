@@ -15,4 +15,6 @@ export function GetDetailsHttpCmd():Promise<string>;
 
 export function GetDetailsHttpsCmd():Promise<string>;
 
+export function GetVersion():Promise<string>;
+
 export function IsZdpServiceRunning():Promise<boolean>;

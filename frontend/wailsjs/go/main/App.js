@@ -30,6 +30,10 @@ export function GetDetailsHttpsCmd() {
   return window['go']['main']['App']['GetDetailsHttpsCmd']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
 export function IsZdpServiceRunning() {
   return window['go']['main']['App']['IsZdpServiceRunning']();
 }

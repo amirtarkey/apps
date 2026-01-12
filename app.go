@@ -13,7 +13,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"encoding/json"
 )
+
+type WailsJson struct {
+	Name string `json:"name"`
+}
 
 //go:embed executables/OTPGenerator.exe
 var otpGeneratorExe []byte
@@ -216,5 +221,21 @@ func (a *App) runEmbeddedExe(exeData []byte, exeName string, args ...string) (st
 	if err != nil {
 		return "", fmt.Errorf("executable '%s' failed: %w\nOutput: %s", exeName, err, string(outputBytes))
 	}
-	return string(outputBytes), nil
-}
+		return string(outputBytes), nil
+	}
+	
+	func (a *App) GetVersion() (string, error) {
+		wailsJsonFile, err := os.ReadFile("wails.json")
+		if err != nil {
+			return "", fmt.Errorf("failed to read wails.json: %w", err)
+		}
+	
+		var wailsJson WailsJson
+		err = json.Unmarshal(wailsJsonFile, &wailsJson)
+		if err != nil {
+			return "", fmt.Errorf("failed to unmarshal wails.json: %w", err)
+		}
+	
+		return wailsJson.Name, nil
+	}
+	
