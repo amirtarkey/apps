@@ -24,10 +24,9 @@ jobs:
     - name: Build
       working-directory: zdp-app
       run: go build -o zdp-tool.exe #./...
-
+      
     - name: Upload artifact
       uses: actions/upload-artifact@v4
-      working-directory: zdp-app
       with:
         name: zdp-tool.exe
-        path: zdp-tool.exe # Adjust 'your-binary-name' to the actual name of your compiled binary
+        path: ./zdp-app/zdp-tool.exe # Adjust 'your-binary-name' to the actual name of your compiled binary
