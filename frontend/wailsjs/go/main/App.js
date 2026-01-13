@@ -18,6 +18,10 @@ export function EnableAntiTampering() {
   return window['go']['main']['App']['EnableAntiTampering']();
 }
 
+export function GetAllVersions() {
+  return window['go']['main']['App']['GetAllVersions']();
+}
+
 export function GetAntiTamperingStatus() {
   return window['go']['main']['App']['GetAntiTamperingStatus']();
 }
@@ -28,6 +32,10 @@ export function GetDetailsHttpCmd() {
 
 export function GetDetailsHttpsCmd() {
   return window['go']['main']['App']['GetDetailsHttpsCmd']();
+}
+
+export function GetDlpSdkVersion() {
+  return window['go']['main']['App']['GetDlpSdkVersion']();
 }
 
 export function GetVersion() {
@@ -44,4 +52,16 @@ export function IsZdpModesObfuscated() {
 
 export function IsZdpServiceRunning() {
   return window['go']['main']['App']['IsZdpServiceRunning']();
+}
+
+export function ReadFileContent(arg1) {
+  return window['go']['main']['App']['ReadFileContent'](arg1);
+}
+
+export function SelectFile() {
+  return window['go']['main']['App']['SelectFile']();
+}
+
+export function StandaloneClassifier(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['StandaloneClassifier'](arg1, arg2, arg3, arg4, arg5);
 }

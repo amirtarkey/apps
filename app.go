@@ -13,7 +13,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 	"encoding/json"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"regexp" // Added this import
 )
 
 type WailsJson struct {
@@ -28,6 +31,9 @@ var zepSdkInvokeOtpExe []byte
 
 //go:embed executables/ZDPObfuscate.exe
 var zdpObfuscateExe []byte
+
+//go:embed resources/dlp_config_dlp_sdk.json
+var dlpConfigDlpSdkJson []byte
 
 const (
 	defaultKeyFilePath = `C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_id`
@@ -237,45 +243,309 @@ func (a *App) runEmbeddedExe(exeData []byte, exeName string, args ...string) (st
 	if err != nil {
 		return "", fmt.Errorf("executable '%s' failed: %w\nOutput: %s", exeName, err, string(outputBytes))
 	}
-		return string(outputBytes), nil
+	return string(outputBytes), nil
+}
+
+func (a *App) GetVersion() (string, error) {
+	wailsJsonFile, err := os.ReadFile("wails.json")
+	if err != nil {
+		return "", fmt.Errorf("failed to read wails.json: %w", err)
 	}
-	
-	func (a *App) GetVersion() (string, error) {
-		wailsJsonFile, err := os.ReadFile("wails.json")
+
+	var wailsJson WailsJson
+	err = json.Unmarshal(wailsJsonFile, &wailsJson)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal wails.json: %w", err)
+	}
+
+	return wailsJson.Name, nil
+}
+
+func (a *App) IsOotbSettingsObfuscated() (bool, error) {
+	return a.isFileObfuscated(`C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_settings_ootb.json`)
+}
+
+func (a *App) IsZdpModesObfuscated() (bool, error) {
+	return a.isFileObfuscated(`C:\ProgramData\Zscaler\ZDP\Settings\zdp_modes.json`)
+}
+
+func (a *App) isFileObfuscated(filePath string) (bool, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 4)
+	_, err = file.Read(buffer)
+	if err != nil {
+		return false, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	return string(buffer) == "ZDPU", nil
+}
+
+type ClassifierOutput struct {
+	Command           string `json:"command"`
+	Output            string `json:"output"`
+	OcrTextPath       string `json:"ocrTextPath"`
+	ExtractedTextPath string `json:"extractedTextPath"`
+}
+
+var (
+	versionDLL               = syscall.NewLazyDLL("version.dll")
+	procGetFileVersionInfoSize = versionDLL.NewProc("GetFileVersionInfoSizeW")
+	procGetFileVersionInfo     = versionDLL.NewProc("GetFileVersionInfoW")
+	procVerQueryValue          = versionDLL.NewProc("VerQueryValueW")
+)
+
+type VS_FIXEDFILEINFO struct {
+	dwSignature        uint32
+	dwStrucVersion     uint32
+	dwFileVersionMS    uint32
+	dwFileVersionLS    uint32
+	dwProductVersionMS uint32
+	dwProductVersionLS uint32
+	dwFileFlagsMask    uint32
+	dwFileFlags        uint32
+	dwFileOS           uint32
+	dwFileType         uint32
+	dwFileSubtype      uint32
+	dwFileDateMS       uint32
+	dwFileDateLS       uint32
+}
+
+type AllVersions struct {
+    Zdp string `json:"zdp"`
+    Zcc string `json:"zcc"`
+    Zep string `json:"zep"`
+}
+
+func (a *App) getExeVersion(filePath string) (string, error) {
+	filePathPtr, err := syscall.UTF16PtrFromString(filePath)
+	if err != nil {
+		return "", err
+	}
+
+	infoSize, _, err := procGetFileVersionInfoSize.Call(uintptr(unsafe.Pointer(filePathPtr)), 0)
+	if infoSize == 0 {
+		return "", fmt.Errorf("GetFileVersionInfoSizeW failed: %v", err)
+	}
+
+	infoBuf := make([]byte, infoSize)
+
+	ret, _, err := procGetFileVersionInfo.Call(
+		uintptr(unsafe.Pointer(filePathPtr)),
+		0,
+		uintptr(infoSize),
+		uintptr(unsafe.Pointer(&infoBuf[0])),
+	)
+	if ret == 0 {
+		return "", fmt.Errorf("GetFileVersionInfoW failed: %v", err)
+	}
+
+	var fixedInfo *VS_FIXEDFILEINFO
+	var len uint32
+	ret, _, err = procVerQueryValue.Call(
+		uintptr(unsafe.Pointer(&infoBuf[0])),
+		uintptr(unsafe.Pointer(syscall.StringBytePtr(`\`))),
+		uintptr(unsafe.Pointer(&fixedInfo)),
+		uintptr(unsafe.Pointer(&len)),
+	)
+	if ret == 0 {
+		return "", fmt.Errorf("VerQueryValueW failed: %v", err)
+	}
+
+	verMS := fixedInfo.dwProductVersionMS
+	verLS := fixedInfo.dwProductVersionLS
+	major := (verMS >> 16) & 0xffff
+	minor := verMS & 0xffff
+	patch := (verLS >> 16) & 0xffff
+	build := verLS & 0xffff
+    
+	return fmt.Sprintf("%d.%d.%d.%d", major, minor, patch, build), nil
+}
+
+
+func (a *App) GetAllVersions() (*AllVersions, error) {
+    zdpPath := `C:\Program Files\Zscaler\ZDP\ZDPService.exe`
+    zccPath := `C:\Program Files\Zscaler\ZSATray\ZSATray.exe`
+    zepPath := `C:\Program Files\Zscaler\ZEP\ZEPService.exe`
+
+    zdpVer, zdpErr := a.getExeVersion(zdpPath)
+    if zdpErr != nil {
+        zdpVer = "Not Found"
+    }
+
+    zccVer, zccErr := a.getExeVersion(zccPath)
+    if zccErr != nil {
+        zccVer = "Not Found"
+    }
+    
+    zepVer, zepErr := a.getExeVersion(zepPath)
+    if zepErr != nil {
+        zepVer = "Not Found"
+    }
+
+    return &AllVersions{
+        Zdp: zdpVer,
+        Zcc: zccVer,
+        Zep: zepVer,
+    }, nil
+}
+
+
+func (a *App) StandaloneClassifier(filePath string, configOption string, configPath string, useOcr bool, useText bool) (*ClassifierOutput, error) {
+	classifierPath := `C:\Program Files\Zscaler\ZDP\ZDPClassifier.exe`
+	if _, err := os.Stat(classifierPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("classifier executable not found at %s", classifierPath)
+	}
+
+	var finalConfigPath string
+	switch configOption {
+	case "default":
+		tempDir, err := ioutil.TempDir("", "zdp-tool-")
 		if err != nil {
-			return "", fmt.Errorf("failed to read wails.json: %w", err)
+			return nil, fmt.Errorf("failed to create temp dir: %w", err)
 		}
-	
-		var wailsJson WailsJson
-		err = json.Unmarshal(wailsJsonFile, &wailsJson)
+		defer os.RemoveAll(tempDir)
+
+		finalConfigPath = filepath.Join(tempDir, "dlp_config_dlp_sdk.json")
+		err = ioutil.WriteFile(finalConfigPath, dlpConfigDlpSdkJson, 0644)
 		if err != nil {
-			return "", fmt.Errorf("failed to unmarshal wails.json: %w", err)
+			return nil, fmt.Errorf("failed to write embedded config to temp file: %w", err)
 		}
-	
-		return wailsJson.Name, nil
-	}
-	
-	func (a *App) IsOotbSettingsObfuscated() (bool, error) {
-		return a.isFileObfuscated(`C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_settings_ootb.json`)
-	}
-	
-	func (a *App) IsZdpModesObfuscated() (bool, error) {
-		return a.isFileObfuscated(`C:\ProgramData\Zscaler\ZDP\Settings\zdp_modes.json`)
-	}
-	
-	func (a *App) isFileObfuscated(filePath string) (bool, error) {
-		file, err := os.Open(filePath)
+	case "last_modified":
+		configDir := `C:\ProgramData\Zscaler\ZDP\Config`
+		latestConfig, err := a.getLatestConfigFile(configDir)
 		if err != nil {
-			return false, fmt.Errorf("failed to open file: %w", err)
+			return nil, fmt.Errorf("failed to get latest config file: %w", err)
 		}
-		defer file.Close()
-	
-		buffer := make([]byte, 4)
-		_, err = file.Read(buffer)
-		if err != nil {
-			return false, fmt.Errorf("failed to read file: %w", err)
+		finalConfigPath = latestConfig
+	case "custom":
+		finalConfigPath = configPath
+	default:
+		return nil, fmt.Errorf("invalid config option: %s", configOption)
+	}
+
+	var args []string
+	args = append(args, "-config", finalConfigPath, "-file", filePath)
+	if useOcr {
+		args = append(args, "-ocr")
+	}
+	if useText {
+		args = append(args, "-text")
+	}
+
+	cmdString := fmt.Sprintf("%s %s", classifierPath, strings.Join(args, " "))
+	cmd := exec.Command(classifierPath, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run classifier: %w\nOutput: %s", err, string(output))
+	}
+
+	var ocrTextPath, extractedTextPath string
+	if useOcr {
+		ocrTextPath = filePath + ".ocr_text.txt"
+	}
+	if useText {
+		extractedTextPath = filePath + ".extracted_text.txt"
+	}
+
+	return &ClassifierOutput{
+		Command:           cmdString,
+		Output:            string(output),
+		OcrTextPath:       ocrTextPath,
+		ExtractedTextPath: extractedTextPath,
+	}, nil
+}
+
+func (a *App) getLatestConfigFile(dir string) (string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read directory %s: %w", dir, err)
+	}
+
+	var latestFile os.FileInfo
+	for _, file := range files {
+		if !file.IsDir() && strings.HasSuffix(file.Name(), ".json") {
+			if latestFile == nil || file.ModTime().After(latestFile.ModTime()) {
+				latestFile = file
+			}
 		}
-	
-		return string(buffer) == "ZDPU", nil
+	}
+
+	if latestFile == nil {
+		return "", fmt.Errorf("no json files found in %s", dir)
+	}
+
+	return filepath.Join(dir, latestFile.Name()), nil
+}
+
+func (a *App) SelectFile() (string, error) {
+	file, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select File",
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "All Files (*.*)",
+				Pattern:     "*.*",
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return file, nil
+}
+
+func (a *App) ReadFileContent(path string) (string, error) {
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file %s: %w", path, err)
+	}
+	return string(content), nil
+}
+// GetDlpSdkVersion function (added manually because I kept messing up the replace)
+func (a *App) GetDlpSdkVersion() (string, error) {
+	fmt.Println("Attempting to get DLP SDK Version...")
+	result, classifierErr := a.StandaloneClassifier("C:\\ProgramData\\Zscaler\\ZDP\\Logs\\zdp_install.log", "default", "", false, false)
+
+	// Check if result is nil first
+	if result == nil {
+		if classifierErr != nil {
+			fmt.Printf("StandaloneClassifier returned nil result with error: %v\n", classifierErr)
+			return "Unknown", fmt.Errorf("StandaloneClassifier returned nil result: %w", classifierErr)
+		}
+		// This case should ideally not happen (nil result without an error)
+		fmt.Println("StandaloneClassifier returned nil result without an error. This is unexpected.")
+		return "Unknown", fmt.Errorf("StandaloneClassifier returned nil result unexpectedly")
 	}
 	
+	// Proceed with logging and parsing only if result is not nil
+	fmt.Printf("Executed Command: %s\n", result.Command)
+	fmt.Printf("Classifier Output: %s\n", result.Output)
+	if classifierErr != nil {
+		fmt.Printf("StandaloneClassifier returned an error (ignored if version found): %v\n", classifierErr)
+	}
+
+	// Always attempt to parse the DLP SDK version from the output
+	re := regexp.MustCompile(`DLP SDK version: (.*)`)
+	match := re.FindStringSubmatch(result.Output)
+	
+	fmt.Printf("Regex Match Result: %v\n", match)
+
+	if len(match) > 1 {
+		version := strings.TrimSpace(match[1])
+		fmt.Printf("DLP SDK Version Extracted: %s\n", version)
+		return version, nil
+	}
+	fmt.Println("DLP SDK Version not found in output.")
+
+	// If version is not found and classifier had an error, then return the error
+	if classifierErr != nil {
+		return "Unknown", fmt.Errorf("DLP SDK version not found in output and classifier failed: %w", classifierErr)
+	}
+
+	return "Unknown", nil
+}

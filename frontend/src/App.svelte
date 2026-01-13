@@ -10,10 +10,12 @@
         DeobfuscateOotbSettings,
         DeobfuscateZdpModes,
         IsOotbSettingsObfuscated,
-        IsZdpModesObfuscated
+        IsZdpModesObfuscated,
+        GetDlpSdkVersion
     } from '../wailsjs/go/main/App.js';
     import { ClipboardSetText } from '../wailsjs/runtime/runtime.js';
     import Footer from './Footer.svelte';
+    import StandaloneClassifier from './StandaloneClassifier.svelte';
   
     let antiTamperStatus = '';
     let resultText = '';
@@ -22,6 +24,8 @@
     let zdpServiceStatus = '';
     let isOotbSettingsObfuscated = false;
     let isZdpModesObfuscated = false;
+    let currentTab = 'Main';
+    let dlpSdkVersion = '';
   
     let timeoutId = null;
     let intervalId = null;
@@ -163,9 +167,15 @@
       }
     }
   
-    onMount(() => {
+    onMount(async () => {
       checkStatuses();
       intervalId = setInterval(checkStatuses, 5000); // Check every 5 seconds
+      try {
+        dlpSdkVersion = await GetDlpSdkVersion();
+      } catch (error) {
+        console.error("Failed to get DLP SDK Version:", error);
+        dlpSdkVersion = "Error";
+      }
     });
 
     onDestroy(() => {
@@ -177,63 +187,74 @@
   
   <main>
     <h1>ZDP Tool</h1>
-    <div class="buttons">
-          <div class="toggle-container">
-            <label for="anti-tamper-toggle">Anti-tampering</label>
-            <label class="switch">
-              <input
-                id="anti-tamper-toggle"
-                type="checkbox"
-                checked={antiTamperStatus === 'Enabled'}
-                on:change={handleToggleAntiTampering}
-              />
-              <span class="slider round"></span>
-            </label>
-          </div>
-          <button on:click={handleGetEndpointDetails}>Get Endpoint Details</button>
-              <div class="toggle-container">
-                <label for="ootb-settings-toggle">De-obfuscate ootb-settings</label>
-                <label class="switch">
-                  <input
-                    id="ootb-settings-toggle"
-                    type="checkbox"
-                    checked={!isOotbSettingsObfuscated}
-                    disabled={!isOotbSettingsObfuscated}
-                    on:change={handleDeobfuscateOotbSettings}
-                  />
-                  <span class="slider round"></span>
-                </label>
-              </div>
-              <div class="toggle-container">
-                <label for="zdp-modes-toggle">De-obfuscate zdp-modes</label>
-                <label class="switch">
-                  <input
-                    id="zdp-modes-toggle"
-                    type="checkbox"
-                    checked={!isZdpModesObfuscated}
-                    disabled={!isZdpModesObfuscated}
-                    on:change={handleDeobfuscateZdpModes}
-                  />
-                  <span class="slider round"></span>
-                </label>
-              </div>
-            </div>    <div class="output">
-      <div class="result">
-        {resultText}
-      </div>
-      {#if endpointDetails}
-        <div class="endpoint-details">
-          <div class="header">
-            <h2>Endpoint Details</h2>
-            <button on:click={copyEndpointDetails}>{copyButtonText}</button>
-          </div>
-          <pre>{JSON.stringify(endpointDetails, null, 2)}</pre>
-        </div>
-      {/if}
+    <div class="tabs">
+      <button on:click={() => currentTab = 'Main'} class:active={currentTab === 'Main'}>Main</button>
+      <button on:click={() => currentTab = 'Standalone Classifier'} class:active={currentTab === 'Standalone Classifier'}>Standalone Classifier</button>
     </div>
+
+    {#if currentTab === 'Main'}
+      <div class="buttons">
+            <div class="toggle-container">
+              <label for="anti-tamper-toggle">Anti-tampering</label>
+              <label class="switch">
+                <input
+                  id="anti-tamper-toggle"
+                  type="checkbox"
+                  checked={antiTamperStatus === 'Enabled'}
+                  on:change={handleToggleAntiTampering}
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <button on:click={handleGetEndpointDetails}>Get Endpoint Details</button>
+                <div class="toggle-container">
+                  <label for="ootb-settings-toggle">De-obfuscate ootb-settings</label>
+                  <label class="switch">
+                    <input
+                      id="ootb-settings-toggle"
+                      type="checkbox"
+                      checked={!isOotbSettingsObfuscated}
+                      disabled={!isOotbSettingsObfuscated}
+                      on:change={handleDeobfuscateOotbSettings}
+                    />
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+                <div class="toggle-container">
+                  <label for="zdp-modes-toggle">De-obfuscate zdp-modes</label>
+                  <label class="switch">
+                    <input
+                      id="zdp-modes-toggle"
+                      type="checkbox"
+                      checked={!isZdpModesObfuscated}
+                      disabled={!isZdpModesObfuscated}
+                      on:change={handleDeobfuscateZdpModes}
+                    />
+                    <span class="slider round"></span>
+                  </label>
+                </div>
+              </div>    <div class="output">
+        <div class="result">
+          {resultText}
+        </div>
+        {#if endpointDetails}
+          <div class="endpoint-details">
+            <div class="header">
+              <h2>Endpoint Details</h2>
+              <button on:click={copyEndpointDetails}>{copyButtonText}</button>
+            </div>
+            <pre>{JSON.stringify(endpointDetails, null, 2)}</pre>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if currentTab === 'Standalone Classifier'}
+      <StandaloneClassifier />
+    {/if}
   </main>
   
-  <Footer {antiTamperStatus} {zdpServiceStatus} />
+  <Footer {antiTamperStatus} {zdpServiceStatus} {dlpSdkVersion} />
   
   <style>
     main {
@@ -242,6 +263,23 @@
       flex-direction: column;
       align-items: center;
       height: 100vh;
+    }
+
+    .tabs {
+      margin-bottom: 1em;
+    }
+
+    .tabs button {
+      margin: 0 0.5em;
+      padding: 0.5em 1em;
+      border: 1px solid #ccc;
+      background-color: #f0f0f0;
+      cursor: pointer;
+    }
+
+    .tabs button.active {
+      background-color: #fff;
+      border-bottom-color: #fff;
     }
   
     h1 {
