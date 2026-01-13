@@ -17,4 +17,8 @@ export function GetDetailsHttpsCmd():Promise<string>;
 
 export function GetVersion():Promise<string>;
 
+export function IsOotbSettingsObfuscated():Promise<boolean>;
+
+export function IsZdpModesObfuscated():Promise<boolean>;
+
 export function IsZdpServiceRunning():Promise<boolean>;

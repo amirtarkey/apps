@@ -34,6 +34,14 @@ export function GetVersion() {
   return window['go']['main']['App']['GetVersion']();
 }
 
+export function IsOotbSettingsObfuscated() {
+  return window['go']['main']['App']['IsOotbSettingsObfuscated']();
+}
+
+export function IsZdpModesObfuscated() {
+  return window['go']['main']['App']['IsZdpModesObfuscated']();
+}
+
 export function IsZdpServiceRunning() {
   return window['go']['main']['App']['IsZdpServiceRunning']();
 }

@@ -134,8 +134,16 @@ func (a *App) GetAntiTamperingStatus() (string, error) {
 }
 
 func (a *App) DeobfuscateOotbSettings() (string, error) {
+	obfuscated, err := a.IsOotbSettingsObfuscated()
+	if err != nil {
+		return "", err
+	}
+	if !obfuscated {
+		return "File is already de-obfuscated.", nil
+	}
+
 	filePath := `C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_settings_ootb.json`
-	err := a.runZDPObfuscate(true, defaultKeyFilePath, filePath)
+	err = a.runZDPObfuscate(true, defaultKeyFilePath, filePath)
 	if err != nil {
 		if strings.Contains(err.Error(), "key file read error") {
 			return "", fmt.Errorf("key file read error: Anti-tampering is enabled. Please disable it to de-obfuscate the file")
@@ -146,8 +154,16 @@ func (a *App) DeobfuscateOotbSettings() (string, error) {
 }
 
 func (a *App) DeobfuscateZdpModes() (string, error) {
+	obfuscated, err := a.IsZdpModesObfuscated()
+	if err != nil {
+		return "", err
+	}
+	if !obfuscated {
+		return "File is already de-obfuscated.", nil
+	}
+
 	filePath := `C:\ProgramData\Zscaler\ZDP\Settings\zdp_modes.json`
-	err := a.runZDPObfuscate(true, defaultKeyFilePath, filePath)
+	err = a.runZDPObfuscate(true, defaultKeyFilePath, filePath)
 	if err != nil {
 		if strings.Contains(err.Error(), "key file read error") {
 			return "", fmt.Errorf("key file read error: Anti-tampering is enabled. Please disable it to de-obfuscate the file")
@@ -237,5 +253,29 @@ func (a *App) runEmbeddedExe(exeData []byte, exeName string, args ...string) (st
 		}
 	
 		return wailsJson.Name, nil
+	}
+	
+	func (a *App) IsOotbSettingsObfuscated() (bool, error) {
+		return a.isFileObfuscated(`C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_settings_ootb.json`)
+	}
+	
+	func (a *App) IsZdpModesObfuscated() (bool, error) {
+		return a.isFileObfuscated(`C:\ProgramData\Zscaler\ZDP\Settings\zdp_modes.json`)
+	}
+	
+	func (a *App) isFileObfuscated(filePath string) (bool, error) {
+		file, err := os.Open(filePath)
+		if err != nil {
+			return false, fmt.Errorf("failed to open file: %w", err)
+		}
+		defer file.Close()
+	
+		buffer := make([]byte, 4)
+		_, err = file.Read(buffer)
+		if err != nil {
+			return false, fmt.Errorf("failed to read file: %w", err)
+		}
+	
+		return string(buffer) == "ZDPU", nil
 	}
 	

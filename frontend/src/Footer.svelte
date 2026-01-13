@@ -2,39 +2,39 @@
   export let antiTamperStatus;
   export let zdpServiceStatus;
 
-  $: antiTamperDotColor = getAntiTamperDotColor(antiTamperStatus);
-  $: zdpServiceDotColor = getZdpServiceDotColor(zdpServiceStatus);
+  $: antiTamperTextColor = getAntiTamperTextColor(antiTamperStatus);
+  $: zdpServiceTextColor = getZdpServiceTextColor(zdpServiceStatus);
 
-  function getAntiTamperDotColor(status) {
+  function getAntiTamperTextColor(status) {
     switch (status) {
       case 'Enabled':
-        return 'green';
+        return 'green-text';
       case 'Disabled':
-        return 'red';
+        return 'red-text';
       default:
-        return 'grey'; // For "Unknown" or other states
+        return 'grey-text'; // For "Unknown" or other states
     }
   }
 
-  function getZdpServiceDotColor(status) {
+  function getZdpServiceTextColor(status) {
     switch (status) {
       case 'Running':
-        return 'green';
+        return 'green-text';
       case 'Starting': // Assuming these states might exist
       case 'Stopping':
-        return 'yellow';
+        return 'yellow-text';
       case 'Stopped':
-        return 'red';
+        return 'red-text';
       default:
-        return 'grey'; // For "Unknown" or other states
+        return 'grey-text'; // For "Unknown" or other states
     }
   }
 </script>
 
 <footer>
   <div class="status-bar">
-        <span>Anti-tampering: <span class="status-dot {antiTamperDotColor}"></span> {antiTamperStatus}</span>
-        <span>ZDP Service: <span class="status-dot {zdpServiceDotColor}"></span> {zdpServiceStatus}</span>
+    <span>Anti-tampering: <span class="{antiTamperTextColor}">{antiTamperStatus}</span></span>
+    <span>ZDP Service: <span class="{zdpServiceTextColor}">{zdpServiceStatus}</span></span>
   </div>
 </footer>
 
@@ -57,28 +57,20 @@
     align-items: center; /* Align items vertically in the middle */
   }
 
-  .status-dot {
-    height: 8px;
-    width: 8px;
-    background-color: grey; /* Default color */
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 5px; /* Space between dot and text */
+  .green-text {
+    color: #4CAF50; /* Green */
   }
 
-  .status-dot.green {
-    background-color: #4CAF50; /* Green */
+  .yellow-text {
+    color: #FFC107; /* Yellow */
   }
 
-  .status-dot.yellow {
-    background-color: #FFC107; /* Yellow */
+  .red-text {
+    color: #F44336; /* Red */
   }
 
-  .status-dot.red {
-    background-color: #F44336; /* Red */
-  }
-
-  .status-dot.grey {
-    background-color: #9E9E9E; /* Grey */
+  .grey-text {
+    color: #9E9E9E; /* Grey */
   }
 </style>
+

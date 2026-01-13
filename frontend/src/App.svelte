@@ -8,7 +8,9 @@
         DisableAntiTampering,
         GetAntiTamperingStatus,
         DeobfuscateOotbSettings,
-        DeobfuscateZdpModes
+        DeobfuscateZdpModes,
+        IsOotbSettingsObfuscated,
+        IsZdpModesObfuscated
     } from '../wailsjs/go/main/App.js';
     import { ClipboardSetText } from '../wailsjs/runtime/runtime.js';
     import Footer from './Footer.svelte';
@@ -18,6 +20,8 @@
     let endpointDetails = null;
     let copyButtonText = 'Copy';
     let zdpServiceStatus = '';
+    let isOotbSettingsObfuscated = false;
+    let isZdpModesObfuscated = false;
   
     let timeoutId = null;
     let intervalId = null;
@@ -42,33 +46,29 @@
     async function checkStatuses() {
       try {
         antiTamperStatus = await GetAntiTamperingStatus();
-  	  let isRunning = await IsZdpServiceRunning();
-  	  zdpServiceStatus = isRunning ? 'Running' : 'Stopped';
+  	    let isRunning = await IsZdpServiceRunning();
+  	    zdpServiceStatus = isRunning ? 'Running' : 'Stopped';
+        isOotbSettingsObfuscated = await IsOotbSettingsObfuscated();
+        isZdpModesObfuscated = await IsZdpModesObfuscated();
       } catch (error) {
         resultText = `Error: ${error}`;
         autoClearResultText(1000);
       }
     }
     
-    async function handleEnableAntiTampering() {
+    async function handleToggleAntiTampering(event) {
+      const isEnabled = event.target.checked;
       clearResultText();
       try {
-        resultText = 'Enabling anti-tampering...';
-        await EnableAntiTampering();
-        resultText = 'Anti-tampering enabled successfully.';
-        checkStatuses();
-      } catch (error) {
-        resultText = `Error: ${error}`;
-      }
-      autoClearResultText(1000);
-    }
-  
-    async function handleDisableAntiTampering() {
-      clearResultText();
-      try {
-        resultText = 'Disabling anti-tampering...';
-        await DisableAntiTampering();
-        resultText = 'Anti-tampering disabled successfully.';
+        if (isEnabled) {
+          resultText = 'Enabling anti-tampering...';
+          await EnableAntiTampering();
+          resultText = 'Anti-tampering enabled successfully.';
+        } else {
+          resultText = 'Disabling anti-tampering...';
+          await DisableAntiTampering();
+          resultText = 'Anti-tampering disabled successfully.';
+        }
         checkStatuses();
       } catch (error) {
         resultText = `Error: ${error}`;
@@ -129,6 +129,7 @@
         const result = await DeobfuscateOotbSettings();
         resultText = result;
         console.log(`handleDeobfuscateOotbSettings: success: ${result}`);
+        checkStatuses();
       } catch (error) {
         resultText = `Error: ${error}`;
         console.log(`handleDeobfuscateOotbSettings: error: ${error}`);
@@ -144,6 +145,7 @@
         const result = await DeobfuscateZdpModes();
         resultText = result;
         console.log(`handleDeobfuscateZdpModes: success: ${result}`);
+        checkStatuses();
       } catch (error) {
         resultText = `Error: ${error}`;
         console.log(`handleDeobfuscateZdpModes: error: ${error}`);
@@ -176,13 +178,46 @@
   <main>
     <h1>ZDP Tool</h1>
     <div class="buttons">
-      <button on:click={handleEnableAntiTampering}>Enable Anti-tampering</button>
-      <button on:click={handleDisableAntiTampering}>Disable Anti-tampering</button>
-      <button on:click={handleGetEndpointDetails}>Get Endpoint Details</button>
-      <button on:click={handleDeobfuscateOotbSettings}>De-obfuscate ootb-settings</button>
-      <button on:click={handleDeobfuscateZdpModes}>De-obfuscate zdp-modes</button>
-    </div>
-    <div class="output">
+          <div class="toggle-container">
+            <label for="anti-tamper-toggle">Anti-tampering</label>
+            <label class="switch">
+              <input
+                id="anti-tamper-toggle"
+                type="checkbox"
+                checked={antiTamperStatus === 'Enabled'}
+                on:change={handleToggleAntiTampering}
+              />
+              <span class="slider round"></span>
+            </label>
+          </div>
+          <button on:click={handleGetEndpointDetails}>Get Endpoint Details</button>
+              <div class="toggle-container">
+                <label for="ootb-settings-toggle">De-obfuscate ootb-settings</label>
+                <label class="switch">
+                  <input
+                    id="ootb-settings-toggle"
+                    type="checkbox"
+                    checked={!isOotbSettingsObfuscated}
+                    disabled={!isOotbSettingsObfuscated}
+                    on:change={handleDeobfuscateOotbSettings}
+                  />
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="toggle-container">
+                <label for="zdp-modes-toggle">De-obfuscate zdp-modes</label>
+                <label class="switch">
+                  <input
+                    id="zdp-modes-toggle"
+                    type="checkbox"
+                    checked={!isZdpModesObfuscated}
+                    disabled={!isZdpModesObfuscated}
+                    on:change={handleDeobfuscateZdpModes}
+                  />
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>    <div class="output">
       <div class="result">
         {resultText}
       </div>
@@ -237,9 +272,77 @@
       text-align: left;
     }
   
-    .endpoint-details .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-  </style>
+      .endpoint-details .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+    
+      .toggle-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        margin-bottom: 0.5em;
+      }
+    
+      .switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 24px;
+      }
+    
+      .switch input { 
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+    
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        -webkit-transition: .4s;
+        transition: .4s;
+      }
+    
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 16px;
+        width: 16px;
+        left: 4px;
+        bottom: 4px;
+        background-color: white;
+        -webkit-transition: .4s;
+        transition: .4s;
+      }
+    
+      input:checked + .slider {
+        background-color: #2196F3;
+      }
+    
+      input:focus + .slider {
+        box-shadow: 0 0 1px #2196F3;
+      }
+    
+      input:checked + .slider:before {
+        -webkit-transform: translateX(26px);
+        -ms-transform: translateX(26px);
+        transform: translateX(26px);
+      }
+    
+      /* Rounded sliders */
+      .slider.round {
+        border-radius: 34px;
+      }
+    
+      .slider.round:before {
+        border-radius: 50%;
+      }
+    </style>
