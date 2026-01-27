@@ -2,8 +2,6 @@
     import { onMount, onDestroy } from 'svelte';
     import {
         IsZdpServiceRunning,
-        GetDetailsHttpsCmd,
-        GetDetailsHttpCmd,
         EnableAntiTampering,
         DisableAntiTampering,
         GetAntiTamperingStatus,
@@ -11,28 +9,35 @@
         DeobfuscateZdpModes,
         IsOotbSettingsObfuscated,
         IsZdpModesObfuscated,
-        GetDlpSdkVersion
+        GetDlpSdkVersion,
+        ClearZdpLogs,
+        GetCurrentLogLevel,
+        SetLogLevel,
+        GetSaveMessagesLocallyStatus,
+        SetSaveMessagesLocally,
+        RegisterDev04
     } from '../wailsjs/go/main/App.js';
-    import { ClipboardSetText } from '../wailsjs/runtime/runtime.js';
     import Footer from './Footer.svelte';
     import StandaloneClassifier from './StandaloneClassifier.svelte';
   
     let antiTamperStatus = '';
     let resultText = '';
-    let endpointDetails = null;
-    let copyButtonText = 'Copy';
     let zdpServiceStatus = '';
     let isOotbSettingsObfuscated = false;
     let isZdpModesObfuscated = false;
+    let saveMessagesLocally = false;
+    let freshStart = false;
     let currentTab = 'Main';
     let dlpSdkVersion = '';
+
+    const logLevels = ["error", "warning", "info", "debug", "trace"];
+    let currentLogLevel = 'info';
   
     let timeoutId = null;
     let intervalId = null;
   
     function clearResultText() {
       resultText = '';
-      endpointDetails = null;
     }
   
     function autoClearResultText(timeout = 10000) {
@@ -43,7 +48,6 @@
       timeoutId = setTimeout(() => {
         console.log('autoClearResultText: clearing result text');
         resultText = '';
-        endpointDetails = null;
       }, timeout);
     }
   
@@ -54,6 +58,7 @@
   	    zdpServiceStatus = isRunning ? 'Running' : 'Stopped';
         isOotbSettingsObfuscated = await IsOotbSettingsObfuscated();
         isZdpModesObfuscated = await IsZdpModesObfuscated();
+        saveMessagesLocally = await GetSaveMessagesLocallyStatus();
       } catch (error) {
         resultText = `Error: ${error}`;
         autoClearResultText(1000);
@@ -80,51 +85,6 @@
       autoClearResultText(1000);
     }
   
-    async function handleGetEndpointDetails() {
-      clearResultText();
-      resultText = 'Getting endpoint details...';
-      endpointDetails = null;
-      console.log('handleGetEndpointDetails: start');
-  
-      try {
-        const isRunning = await IsZdpServiceRunning();
-        if (!isRunning) {
-          resultText = 'ZDP service is not running.';
-          autoClearResultText(10000);
-          console.log('handleGetEndpointDetails: ZDP service not running');
-          return;
-        }
-  
-        try {
-          console.log('handleGetEndpointDetails: trying HTTPS');
-          const details = await GetDetailsHttpsCmd();
-          endpointDetails = JSON.parse(details);
-          resultText = 'Endpoint details retrieved successfully via HTTPS.';
-          console.log('handleGetEndpointDetails: HTTPS success');
-          autoClearResultText(10000);
-        } catch (httpsError) {
-          console.log(`handleGetEndpointDetails: HTTPS error: ${httpsError}`);
-          resultText = `HTTPS attempt failed: ${httpsError}. Trying HTTP...`;
-          try {
-            console.log('handleGetEndpointDetails: trying HTTP');
-            const details = await GetDetailsHttpCmd();
-            endpointDetails = JSON.parse(details);
-            resultText = 'Endpoint details retrieved successfully via HTTP.';
-            console.log('handleGetEndpointDetails: HTTP success');
-            autoClearResultText(10000);
-          } catch (httpError) {
-            console.log(`handleGetEndpointDetails: HTTP error: ${httpError}`);
-            resultText = `HTTP attempt also failed: ${httpError}`;
-            autoClearResultText(10000);
-          }
-        }
-      } catch (error) {
-        console.log(`handleGetEndpointDetails: unexpected error: ${error}`);
-        resultText = `An unexpected error occurred: ${error}`;
-        autoClearResultText(10000);
-      }
-    }
-  
     async function handleDeobfuscateOotbSettings() {
       clearResultText();
       console.log('handleDeobfuscateOotbSettings: start');
@@ -140,7 +100,7 @@
       }
       autoClearResultText(5000);
     }
-  
+
     async function handleDeobfuscateZdpModes() {
       clearResultText();
       console.log('handleDeobfuscateZdpModes: start');
@@ -156,15 +116,66 @@
       }
       autoClearResultText(5000);
     }
-  
-    function copyEndpointDetails() {
-      if (endpointDetails) {
-        ClipboardSetText(JSON.stringify(endpointDetails, null, 2));
-        copyButtonText = 'Copied!';
-        setTimeout(() => {
-          copyButtonText = 'Copy';
-        }, 2000);
+
+    async function handleLogLevelChange(event) {
+        const newLevel = event.target.value;
+        clearResultText();
+        resultText = `Setting log level to ${newLevel}...`;
+        try {
+            await SetLogLevel(newLevel);
+            currentLogLevel = newLevel;
+            resultText = `Log level successfully set to ${newLevel}.`;
+        } catch (error) {
+            resultText = `Error setting log level: ${error}`;
+        }
+        autoClearResultText(5000);
+    }
+
+    async function handleToggleSaveMessagesLocally(event) {
+        const isEnabled = event.target.checked;
+        clearResultText();
+        resultText = `Setting 'Save Messages Locally' to ${isEnabled}...`;
+        try {
+            const result = await SetSaveMessagesLocally(isEnabled);
+            resultText = result;
+            saveMessagesLocally = isEnabled;
+        } catch (error) {
+            resultText = `Error: ${error}`;
+        }
+        autoClearResultText(5000);
+    }
+
+    async function handleRegisterDev04() {
+      clearResultText();
+      console.log('handleRegisterDev04: start');
+      try {
+        resultText = 'Registering to Dev04...';
+        const result = await RegisterDev04(freshStart);
+        resultText = result;
+        console.log(`handleRegisterDev04: success: ${result}`);
+        checkStatuses();
+      } catch (error) {
+        resultText = `Error: ${error}`;
+        console.log(`handleRegisterDev04: error: ${error}`);
       }
+      autoClearResultText(5000);
+    }
+
+    // New function to handle clearing ZDP logs
+    async function handleClearZdpLogs() {
+      clearResultText();
+      console.log('handleClearZdpLogs: start');
+      try {
+        resultText = 'Attempting to clear ZDP logs...';
+        const result = await ClearZdpLogs();
+        resultText = result;
+        console.log(`handleClearZdpLogs: success: ${result}`);
+        checkStatuses(); // Update statuses in case anti-tampering was checked
+      } catch (error) {
+        resultText = `Error: ${error}`;
+        console.log(`handleClearZdpLogs: error: ${error}`);
+      }
+      autoClearResultText(5000);
     }
   
     onMount(async () => {
@@ -175,6 +186,18 @@
       } catch (error) {
         console.error("Failed to get DLP SDK Version:", error);
         dlpSdkVersion = "Error";
+      }
+      try {
+        currentLogLevel = await GetCurrentLogLevel();
+      } catch (error) {
+        resultText = `Error getting log level: ${error}`;
+        autoClearResultText(5000);
+      }
+      try {
+        saveMessagesLocally = await GetSaveMessagesLocallyStatus();
+      } catch (error) {
+        resultText = `Error getting 'Save Messages Locally' status: ${error}`;
+        autoClearResultText(5000);
       }
     });
 
@@ -206,46 +229,70 @@
                 <span class="slider round"></span>
               </label>
             </div>
-            <button on:click={handleGetEndpointDetails}>Get Endpoint Details</button>
-                <div class="toggle-container">
-                  <label for="ootb-settings-toggle">De-obfuscate ootb-settings</label>
-                  <label class="switch">
-                    <input
-                      id="ootb-settings-toggle"
-                      type="checkbox"
-                      checked={!isOotbSettingsObfuscated}
-                      disabled={!isOotbSettingsObfuscated}
-                      on:change={handleDeobfuscateOotbSettings}
-                    />
-                    <span class="slider round"></span>
-                  </label>
-                </div>
-                <div class="toggle-container">
-                  <label for="zdp-modes-toggle">De-obfuscate zdp-modes</label>
-                  <label class="switch">
-                    <input
-                      id="zdp-modes-toggle"
-                      type="checkbox"
-                      checked={!isZdpModesObfuscated}
-                      disabled={!isZdpModesObfuscated}
-                      on:change={handleDeobfuscateZdpModes}
-                    />
-                    <span class="slider round"></span>
-                  </label>
-                </div>
-              </div>    <div class="output">
+            <div class="toggle-container">
+              <label for="save-messages-locally-toggle">Save Messages Locally</label>
+              <label class="switch">
+                <input
+                  id="save-messages-locally-toggle"
+                  type="checkbox"
+                  checked={saveMessagesLocally}
+                  on:change={handleToggleSaveMessagesLocally}
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="toggle-container">
+              <label for="log-level-select">ZEP Log Level</label>
+              <select id="log-level-select" class="dropdown" bind:value={currentLogLevel} on:change={handleLogLevelChange}>
+                {#each logLevels as level}
+                  <option value={level}>{level}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="toggle-container">
+              <label for="ootb-settings-toggle">De-obfuscate ootb-settings</label>
+              <label class="switch">
+                <input
+                  id="ootb-settings-toggle"
+                  type="checkbox"
+                  checked={!isOotbSettingsObfuscated}
+                  disabled={!isOotbSettingsObfuscated}
+                  on:change={handleDeobfuscateOotbSettings}
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="toggle-container">
+              <label for="zdp-modes-toggle">De-obfuscate zdp-modes</label>
+              <label class="switch">
+                <input
+                  id="zdp-modes-toggle"
+                  type="checkbox"
+                  checked={!isZdpModesObfuscated}
+                  disabled={!isZdpModesObfuscated}
+                  on:change={handleDeobfuscateZdpModes}
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <button on:click={handleClearZdpLogs}>Clear ZDP Logs</button>
+            <div class="toggle-container">
+              <label for="fresh-start-toggle">Fresh Start</label>
+              <label class="switch">
+                <input
+                  id="fresh-start-toggle"
+                  type="checkbox"
+                  bind:checked={freshStart}
+                />
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <button on:click={handleRegisterDev04}>Register to Dev04</button>
+      </div>
+      <div class="output">
         <div class="result">
           {resultText}
         </div>
-        {#if endpointDetails}
-          <div class="endpoint-details">
-            <div class="header">
-              <h2>Endpoint Details</h2>
-              <button on:click={copyEndpointDetails}>{copyButtonText}</button>
-            </div>
-            <pre>{JSON.stringify(endpointDetails, null, 2)}</pre>
-          </div>
-        {/if}
       </div>
     {/if}
 
@@ -359,6 +406,14 @@
         background-color: white;
         -webkit-transition: .4s;
         transition: .4s;
+      }
+
+      .dropdown {
+        padding: 0.5em;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background-color: white;
+        width: 100px; /* Or adjust as needed */
       }
     
       input:checked + .slider {

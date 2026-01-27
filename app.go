@@ -3,20 +3,18 @@ package main
 import (
 	"context"
 	_ "embed"
-	"crypto/tls"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 	"encoding/json"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"regexp" // Added this import
+	"golang.org/x/sys/windows/registry"
 )
 
 type WailsJson struct {
@@ -55,6 +53,49 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// GetCurrentLogLevel reads the ZEP global log level from the registry.
+func (a *App) GetCurrentLogLevel() (string, error) {
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Zscaler Inc.\ZEP\Log`, registry.QUERY_VALUE)
+	if err != nil {
+		if err == registry.ErrNotExist {
+			// If the key or value doesn't exist, it's better to return a known default.
+			// ZEP default is "info"
+			return "info", nil
+		}
+		return "", fmt.Errorf("failed to open registry key: %w", err)
+	}
+	defer key.Close()
+
+	logLevel, _, err := key.GetStringValue("GlobalLogLevel")
+	if err != nil {
+		if err == registry.ErrNotExist {
+			// ZEP default is "info"
+			return "info", nil
+		}
+		return "", fmt.Errorf("failed to read registry value: %w", err)
+	}
+
+	// The registry might store the value with a different case.
+	return strings.ToLower(logLevel), nil
+}
+
+// SetLogLevel sets the ZEP global log level in the registry.
+func (a *App) SetLogLevel(level string) error {
+	// This action requires administrator privileges. The frontend should be aware of this.
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Zscaler Inc.\ZEP\Log`, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("failed to open registry key with write access: %w. Please ensure the application is run with administrator privileges", err)
+	}
+	defer key.Close()
+
+	err = key.SetStringValue("GlobalLogLevel", level)
+	if err != nil {
+		return fmt.Errorf("failed to write registry value: %w", err)
+	}
+
+	return nil
+}
+
 // --- Methods callable from frontend ---
 
 func (a *App) IsZdpServiceRunning() bool {
@@ -65,56 +106,6 @@ func (a *App) IsZdpServiceRunning() bool {
 		return false
 	}
 	return strings.Contains(string(output), "Running")
-}
-
-func (a *App) GetDetailsHttpsCmd() (string, error) {
-	url := "https://127.0.0.1:9861/api/v1.0/get-zdpe-details"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create HTTPS request: %w", err)
-	}
-
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{
-		Transport: tr,
-		Timeout:   5 * time.Second,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("HTTPS request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read HTTPS response body: %w", err)
-	}
-	return string(body), nil
-}
-
-func (a *App) GetDetailsHttpCmd() (string, error) {
-	url := "http://127.0.0.1:9861/api/v1.0/get-zdpe-details"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create HTTP request: %w", err)
-	}
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read HTTP response body: %w", err)
-	}
-	return string(body), nil
 }
 
 func (a *App) EnableAntiTampering() error {
@@ -506,6 +497,36 @@ func (a *App) ReadFileContent(path string) (string, error) {
 	}
 	return string(content), nil
 }
+
+func (a *App) ClearZdpLogs() (string, error) {
+    status, err := a.GetAntiTamperingStatus()
+    if err != nil {
+        return "", fmt.Errorf("failed to get anti-tampering status: %w", err)
+    }
+
+    if status == "Enabled" {
+        return "", fmt.Errorf("anti-tampering is enabled. Please disable it before clearing ZDP logs")
+    }
+
+    logFilePath := `C:\ProgramData\Zscaler\ZDP\Logs\zdp_service.log`
+    
+    // Check if the file exists before attempting to clear.
+    // If it doesn't exist, we can treat it as successfully "cleared" (it's already empty).
+    _, err = os.Stat(logFilePath)
+    if os.IsNotExist(err) {
+        return fmt.Sprintf("ZDP logs file %s does not exist (already cleared).", logFilePath), nil
+    } else if err != nil {
+        return "", fmt.Errorf("failed to check existence of ZDP logs at %s: %w", logFilePath, err)
+    }
+
+    err = os.WriteFile(logFilePath, []byte{}, 0644) // Empty byte slice clears content
+    if err != nil {
+        // More verbose error reporting
+        return "", fmt.Errorf("failed to clear ZDP logs at %s: %v. This might be due to file being in use or permissions. Ensure ZDP service is stopped or anti-tampering is truly disabled.", logFilePath, err)
+    }
+
+    return fmt.Sprintf("ZDP logs at %s cleared successfully.", logFilePath), nil
+}
 // GetDlpSdkVersion function (added manually because I kept messing up the replace)
 func (a *App) GetDlpSdkVersion() (string, error) {
 	fmt.Println("Attempting to get DLP SDK Version...")
@@ -548,4 +569,310 @@ func (a *App) GetDlpSdkVersion() (string, error) {
 	}
 
 	return "Unknown", nil
+}
+
+const ootbSettingsPath = `C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_settings_ootb.json`
+
+func (a *App) getOotbSettings() (map[string]interface{}, error) {
+	// This function now assumes the file might need de-obfuscation,
+	// which is handled by the calling functions Get/SetSaveMessagesLocallyStatus.
+	// It just reads and parses the file.
+
+	// Read file
+	content, err := ioutil.ReadFile(ootbSettingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not read ootb settings file: %w", err)
+	}
+
+	// Unmarshal JSON
+	var settings map[string]interface{}
+	err = json.Unmarshal(content, &settings)
+	if err != nil {
+		return nil, fmt.Errorf("could not unmarshal ootb settings json: %w", err)
+	}
+	return settings, nil
+}
+
+func (a *App) GetSaveMessagesLocallyStatus() (bool, error) {
+	// Ensure the file is readable by de-obfuscating if necessary.
+	obfuscated, err := a.IsOotbSettingsObfuscated()
+	if err != nil {
+		// If the file doesn't exist, we can reasonably assume the setting is disabled/default.
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("could not check if ootb settings are obfuscated: %w", err)
+	}
+	if obfuscated {
+		_, err := a.DeobfuscateOotbSettings() // This returns a string message on success, which we ignore here.
+		if err != nil {
+			return false, fmt.Errorf("failed to de-obfuscate ootb settings to read status: %w", err)
+		}
+	}
+
+	settings, err := a.getOotbSettings()
+	if err != nil {
+		// If the file doesn't exist after all checks, return false.
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Navigate to the "troubleshooting" object
+	troubleshooting, ok := settings["troubleshooting"].(map[string]interface{})
+	if !ok {
+		return false, fmt.Errorf("'troubleshooting' section not found or invalid in ootb settings")
+	}
+
+	// Get value
+	saveMessages, ok := troubleshooting["save_messages_locally"].(bool)
+	if !ok {
+		// If the key doesn't exist or is not a boolean, assume false.
+		return false, nil
+	}
+
+	return saveMessages, nil
+}
+
+func (a *App) SetSaveMessagesLocally(enabled bool) (string, error) {
+	// Step 1: De-obfuscate ootb settings
+	// We run this regardless, as it checks for obfuscation internally and handles anti-tampering errors.
+	deobfuscateMsg, err := a.DeobfuscateOotbSettings()
+	if err != nil {
+		// Don't stop if it's already de-obfuscated, but fail on other errors (like AT enabled)
+		if !strings.Contains(err.Error(), "already de-obfuscated") {
+			return "", err
+		}
+	}
+	fmt.Println(deobfuscateMsg) // Log the message from de-obfuscation for debugging
+
+	// Step 2: Read, update, and write the setting
+	settings, err := a.getOotbSettings()
+	if err != nil {
+		return "", err // Error reading settings file
+	}
+
+	// Navigate to the "troubleshooting" object
+	troubleshooting, ok := settings["troubleshooting"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("'troubleshooting' section not found or invalid in ootb settings")
+	}
+
+	// Update value
+	troubleshooting["save_messages_locally"] = enabled
+
+	// Marshal back to JSON with indentation
+	updatedContent, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal updated settings: %w", err)
+	}
+
+	// Write file
+	err = ioutil.WriteFile(ootbSettingsPath, updatedContent, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to write updated ootb settings: %w", err)
+	}
+
+	// Step 3: Restart the service
+	err = a.RestartZdpService()
+	if err != nil {
+		// Return a more specific error message to the user
+		return "", fmt.Errorf("settings updated, but failed to restart ZDP service: %w. Please try restarting manually", err)
+	}
+
+	return fmt.Sprintf("Successfully set 'save_messages_locally' to %v and restarted ZDP service.", enabled), nil
+}
+
+func (a *App) StopZdpService() error {
+	stopCmd := `
+		$service = Get-Service -Name zdpservice -ErrorAction SilentlyContinue
+		if ($null -ne $service -and $service.Status -ne 'Stopped') {
+			try {
+				Stop-Service -Name zdpservice -PassThru | Out-Null
+				$service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+			} catch {
+				throw "Timeout waiting for ZDP service to stop."
+			}
+		}
+	`
+	cmd := exec.Command("powershell", "-Command", stopCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to stop service: %s", string(output))
+	}
+	return nil
+}
+
+func (a *App) StartZdpService() error {
+	startCmd := `
+		$service = Get-Service -Name zdpservice -ErrorAction SilentlyContinue
+		if ($null -ne $service -and $service.Status -ne 'Running') {
+			try {
+				Start-Service -Name zdpservice -PassThru | Out-Null
+				$service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+			} catch {
+				throw "Timeout waiting for ZDP service to start."
+			}
+		}
+	`
+	cmd := exec.Command("powershell", "-Command", startCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to start service: %s", string(output))
+	}
+
+	// Final check
+	finalCheckCmd := `(Get-Service -Name zdpservice -ErrorAction SilentlyContinue).Status`
+	cmd = exec.Command("powershell", "-Command", finalCheckCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "Running" {
+		return fmt.Errorf("service did not start correctly. Final status: %s. Error: %v", string(output), err)
+	}
+
+	return nil
+}
+
+func (a *App) RestartZdpService() error {
+
+	// This command requires administrator privileges.
+
+	err := a.StopZdpService()
+
+	if err != nil {
+
+		return err
+
+	}
+
+	return a.StartZdpService()
+
+}
+
+
+
+func (a *App) RegisterDev04(freshStart bool) (string, error) {
+	// 1. Disable anti-tampering
+	err := a.DisableAntiTampering()
+	if err != nil {
+		return "", fmt.Errorf("failed to disable anti-tampering: %w", err)
+	}
+
+	// 2. de-obfuscate ootb
+	deobfuscateMsg, err := a.DeobfuscateOotbSettings()
+	if err != nil {
+		if !strings.Contains(err.Error(), "already de-obfuscated") {
+			return "", err
+		}
+	}
+	fmt.Println(deobfuscateMsg)
+
+	// 3. change the "register_endpoint_dev_url" key and "register_endpoint_dev_apikey" key values
+	settings, err := a.getOotbSettings()
+	if err != nil {
+		return "", err
+	}
+
+	troubleshooting, ok := settings["troubleshooting"].(map[string]interface{})
+	if !ok {
+		// if troubleshooting section doesn't exist, create it
+		troubleshooting = make(map[string]interface{})
+		settings["troubleshooting"] = troubleshooting
+	}
+
+	troubleshooting["register_endpoint_dev_url"] = "https://endpoints.dev04.us-east-1.m3.dataprotection.zsprotect.net/api/1.0/register-endpoint"
+	troubleshooting["register_endpoint_dev_apikey"] = "3nNKYWHW449IczYdgBFwc65bBmFx6lWT2WgVWH4d"
+
+	updatedContent, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal updated settings: %w", err)
+	}
+
+	err = ioutil.WriteFile(ootbSettingsPath, updatedContent, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to write updated ootb settings: %w", err)
+	}
+
+	// 4. if 'fresh start' is checked
+	if freshStart {
+		err = a.StopZdpService()
+		if err != nil {
+			return "", fmt.Errorf("failed to stop ZDP service: %w", err)
+		}
+
+		zdpPath := `C:\ProgramData\Zscaler\ZDP`
+		exceptions := []string{
+			`C:\ProgramData\Zscaler\ZDP\Settings\PSI\XEY`,
+			`C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_settings_ootb.json`,
+			`C:\ProgramData\Zscaler\ZDP\Settings\zdp_endpoint_id`,
+			`C:\ProgramData\Zscaler\ZDP\Applications\application_ids.json`,
+		}
+
+		// Create a map for quick lookup
+		exceptionMap := make(map[string]bool)
+		for _, e := range exceptions {
+			exceptionMap[e] = true
+		}
+
+		// Get all files and directories to delete
+		var filesToDelete []string
+		walkErr := filepath.Walk(zdpPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			// Skip the root zdpPath itself
+			if path == zdpPath {
+				return nil
+			}
+
+			// check if path is an exception
+			if _, ok := exceptionMap[path]; ok {
+				if info.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// check if path is a parent of an exception
+			isParent := false
+			for _, e := range exceptions {
+				if strings.HasPrefix(e, path) {
+					isParent = true
+					break
+				}
+			}
+
+			if isParent {
+				return nil
+			}
+
+			filesToDelete = append(filesToDelete, path)
+			return nil
+		})
+
+		if walkErr != nil {
+			return "", fmt.Errorf("error walking directory: %w", walkErr)
+		}
+
+		// Delete files in reverse order to ensure children are deleted before parents
+		for i := len(filesToDelete) - 1; i >= 0; i-- {
+			err = os.RemoveAll(filesToDelete[i])
+			if err != nil {
+				// Log the error but continue trying to delete other files
+				fmt.Printf("failed to delete %s: %v\n", filesToDelete[i], err)
+			}
+		}
+
+		err = a.StartZdpService()
+		if err != nil {
+			return "", fmt.Errorf("failed to start ZDP service: %w", err)
+		}
+	} else {
+		err = a.RestartZdpService()
+		if err != nil {
+			return "", fmt.Errorf("failed to restart ZDP service: %w", err)
+		}
+	}
+
+	return "Successfully registered to Dev04.", nil
 }
